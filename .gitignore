@@ -16,7 +16,9 @@ sheerIDlink.txt
 
 # Exception: Keep specific community images
 !Telegram.jpg
+!Telegram.png
 !QQ.jpg
+!zanshang.jpg
 
 # Exclude build artifacts and temp files
 build/

@@ -137,8 +137,9 @@ async def _automate_login_and_extract(playwright: Playwright, browser_id: str, a
             print("Checking for eligibility (max 6s)...")
             
             while time.time() - start_time < 6:
-                # Check for Verify Link First
-                if await page.locator('a[aria-label="Verify eligibility"]').is_visible():
+                # Check for Verify Link First (Language Agnostic: check href)
+                # Matches any <a> tag where href contains 'sheerid.com'
+                if await page.locator('a[href*="sheerid.com"]').count() > 0:
                     found_link = True
                     break
 
@@ -156,9 +157,9 @@ async def _automate_login_and_extract(playwright: Playwright, browser_id: str, a
                 await asyncio.sleep(0.5) # Check more frequently
 
             if found_link:
-                # Target the <a> tag directly using aria-label
-                link = page.locator('a[aria-label="Verify eligibility"]')
-                print("Found 'Verify eligibility' link element.")
+                # Target the <a> tag directly using href substring logic
+                link = page.locator('a[href*="sheerid.com"]').first
+                print("Found 'Verify eligibility' link element (by href).")
                 
                 # Get href attribute
                 href = await link.get_attribute("href")
