@@ -29,16 +29,29 @@ class SheerIDVerifier:
             resp = self.session.get(BASE_URL, headers=self.headers, timeout=10)
             resp.raise_for_status()
             
-            # Regex to find window.CSRF_TOKEN = "..."
-            match = re.search(r'window\.CSRF_TOKEN\s*=\s*["\']([^"\']+)["\']', resp.text)
-            if match:
-                self.csrf_token = match.group(1)
-                self.headers["X-CSRF-Token"] = self.csrf_token
-                logger.info(f"CSRF Token obtained: {self.csrf_token[:10]}...")
-                return True
-            else:
-                logger.error("CSRF Token pattern not found in page.")
-                return False
+            # 尝试多种 CSRF token 模式
+            patterns = [
+                r'window\.CSRF_TOKEN\s*=\s*["\']([^"\']+)["\']',  # window.CSRF_TOKEN = "..."
+                r'csrfToken["\']?\s*[:=]\s*["\']([^"\']+)["\']',  # csrfToken: "..." or csrfToken = "..."
+                r'_csrf["\']?\s*[:=]\s*["\']([^"\']+)["\']',      # _csrf: "..." or _csrf = "..."
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, resp.text, re.IGNORECASE)
+                if match:
+                    self.csrf_token = match.group(1)
+                    self.headers["X-CSRF-Token"] = self.csrf_token
+                    logger.info(f"CSRF Token obtained: {self.csrf_token[:10]}...")
+                    return True
+            
+            # 如果都没匹配到，保存HTML用于调试
+            logger.error("CSRF Token pattern not found in page.")
+            logger.debug(f"Page content (first 500 chars): {resp.text[:500]}")
+            
+            # 尝试不使用 CSRF token 继续
+            logger.warning("Attempting to proceed without CSRF token...")
+            return False
+            
         except Exception as e:
             logger.error(f"Failed to get CSRF token: {e}")
             return False
@@ -48,9 +61,10 @@ class SheerIDVerifier:
         Verify a batch of IDs (list of strings).
         Returns a dict {verification_id: status_result}
         """
+        # 尝试获取 CSRF token，但即使失败也继续
         if not self.csrf_token:
-            if not self._get_csrf_token():
-                return {vid: {"status": "error", "message": "Failed to get CSRF token"} for vid in verification_ids}
+            logger.warning("No CSRF token yet, attempting to fetch...")
+            self._get_csrf_token()
 
         results = {}
         # Max 5 IDs per batch if API key is present
