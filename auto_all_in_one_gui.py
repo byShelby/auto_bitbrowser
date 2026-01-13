@@ -159,9 +159,8 @@ class AutoAllInOneWorker(QThread):
                     context = browser.contexts[0]
                     page = context.pages[0] if context.pages else await context.new_page()
                     
-                    # 导入处理函数
-                    from run_playwright_google import check_and_login, detect_account_status
-                    from auto_bind_card import auto_bind_card
+                    # 从 auto_bind_card 导入
+                    from auto_bind_card import check_and_login, auto_bind_card
                     
                     # Step 1: 登录检测
                     self.log_signal.emit(f"  🔐 步骤1: 登录检测...")
@@ -177,7 +176,8 @@ class AutoAllInOneWorker(QThread):
                     self.log_signal.emit(f"  🔍 步骤2: 状态检测...")
                     await asyncio.sleep(3)
                     
-                    status = await detect_account_status(page)
+                    # 检测状态（使用内联逻辑）
+                    status = await self._detect_status(page)
                     self.log_signal.emit(f"  📊 当前状态: {status}")
                     
                     # Step 3: 根据状态执行操作
@@ -209,14 +209,70 @@ class AutoAllInOneWorker(QThread):
         except Exception as e:
             return False, str(e)
     
+    async def _detect_status(self, page):
+        """
+        检测账号当前状态
+        返回: link_ready, verified, subscribed, ineligible, error
+        """
+        try:
+            page_content = await page.content()
+            page_text = await page.evaluate("() => document.body.innerText")
+            
+            # 检测关键词
+            if "Subscribed" in page_content or "已订阅" in page_text:
+                return "subscribed"
+            elif "Get student offer" in page_content or "获取学生优惠" in page_text:
+                return "verified"
+            elif "verify your eligibility" in page_content or "验证您的资格" in page_text:
+                return "link_ready"
+            elif "not available" in page_text or "不可用" in page_text:
+                return "ineligible"
+            else:
+                return "error"
+        except Exception:
+            return "error"
+    
     async def _handle_link_ready(self, page, email, card_info):
         """处理有资格待验证的账号"""
         try:
             self.log_signal.emit(f"  🔗 步骤3a: 提取SheerID链接...")
             
-            # 提取链接（使用现有代码）
-            from run_playwright_google import extract_link
-            link = await extract_link(page)
+            # 提取链接（内联实现）
+            try:
+                # 点击 "verify your eligibility" 按钮
+                await page.wait_for_selector('text=verify your eligibility', timeout=10000)
+                await page.click('text=verify your eligibility')
+                await asyncio.sleep(3)
+                
+                # 等待新页面或iframe加载
+                await asyncio.sleep(2)
+                
+                # 获取当前URL或iframe中的链接
+                link = None
+                current_url = page.url
+                
+                if "sheerid" in current_url.lower():
+                    link = current_url
+                else:
+                    # 尝试从iframe获取
+                    frames = page.frames
+                    for frame in frames:
+                        frame_url = frame.url
+                        if "sheerid" in frame_url.lower():
+                            link = frame_url
+                            break
+                
+                if not link:
+                    # 尝试从页面内容中提取
+                    page_content = await page.content()
+                    import re
+                    sheerid_match = re.search(r'https://[^"\']*sheerid[^"\']*', page_content)
+                    if sheerid_match:
+                        link = sheerid_match.group()
+            
+            except Exception as e:
+                self.log_signal.emit(f"  ⚠️ 提取链接时出错: {e}")
+                link = None
             
             if not link:
                 return False, "无法提取SheerID链接"
