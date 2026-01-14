@@ -535,6 +535,10 @@ class BrowserWindowCreatorGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # 初始化数据库（会自动从accounts.txt等文件导入）
+        from database import DBManager
+        DBManager.init_db()
+        
         # 设置窗口图标
         try:
             icon_path = resource_path("beta-1.svg")
