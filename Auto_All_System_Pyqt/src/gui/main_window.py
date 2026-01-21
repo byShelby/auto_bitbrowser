@@ -480,7 +480,8 @@ class MainWindow(QMainWindow):
         # 日志文本框
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("background-color: #1e1e1e; color: #dcdcdc; font-family: Consolas;")
+        self.log_text.setMinimumWidth(200)
+        self.log_text.setStyleSheet("background-color: #ffffff; color: #333333; font-family: Consolas; border: 1px solid #ccc;")
         layout.addWidget(self.log_text)
         
         # 清除日志按钮
@@ -518,8 +519,59 @@ class MainWindow(QMainWindow):
     def _refresh_browser_list(self):
         """刷新浏览器列表"""
         self.log("正在刷新窗口列表...")
-        # TODO: 实现刷新逻辑
-        self.log("列表刷新完成")
+        try:
+            # 导入比特浏览器API
+            try:
+                from create_window import get_browser_list
+            except ImportError:
+                from core.bit_api import BitBrowserAPI
+                def get_browser_list(page=0, pageSize=1000):
+                    api = BitBrowserAPI()
+                    return api.list_browsers(page=page, page_size=pageSize).get('data', {}).get('list', [])
+            
+            browsers = get_browser_list(page=0, pageSize=1000)
+            
+            self.browser_table.setRowCount(0)
+            
+            import pyotp
+            for browser in browsers:
+                name = browser.get('name', '')
+                browser_id = browser.get('id', '')
+                remark = browser.get('remark', '')
+                
+                # 生成2FA验证码
+                totp_code = ''
+                if '----' in remark:
+                    parts = remark.split('----')
+                    if len(parts) >= 4:
+                        secret = parts[3].strip()
+                        if secret:
+                            try:
+                                totp = pyotp.TOTP(secret.replace(' ', ''))
+                                totp_code = totp.now()
+                            except:
+                                pass
+                
+                row = self.browser_table.rowCount()
+                self.browser_table.insertRow(row)
+                
+                # 复选框
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                chk_item.setCheckState(Qt.CheckState.Unchecked)
+                self.browser_table.setItem(row, 0, chk_item)
+                
+                self.browser_table.setItem(row, 1, QTableWidgetItem(name))
+                self.browser_table.setItem(row, 2, QTableWidgetItem(browser_id))
+                self.browser_table.setItem(row, 3, QTableWidgetItem(totp_code))
+                self.browser_table.setItem(row, 4, QTableWidgetItem(remark[:50] + '...' if len(remark) > 50 else remark))
+            
+            self.log(f"列表刷新完成，共 {len(browsers)} 个窗口")
+            
+        except Exception as e:
+            self.log(f"刷新列表失败: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _refresh_2fa(self):
         """刷新并保存2FA验证码"""
@@ -556,12 +608,121 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请输入模板窗口ID")
             return
         self.log(f"开始使用模板 {template_id} 创建窗口...")
-        # TODO: 实现创建逻辑
+        self._do_create_windows(template_id=template_id)
     
     def _start_creation_default(self):
         """使用默认模板创建窗口"""
         self.log("开始使用默认模板创建窗口...")
-        # TODO: 实现创建逻辑
+        self._do_create_windows(template_id=None)
+    
+    def _do_create_windows(self, template_id: str = None):
+        """执行创建窗口"""
+        try:
+            from core.database import DBManager
+            
+            # 获取待创建窗口的账号
+            accounts = DBManager.get_accounts_without_browser()
+            if not accounts:
+                QMessageBox.information(self, "提示", "没有待创建窗口的账号")
+                return
+            
+            # 获取可用代理
+            proxies = DBManager.get_available_proxies()
+            
+            # 导入创建窗口函数
+            try:
+                from create_window import create_browser_window, get_browser_info, get_next_window_name
+            except ImportError:
+                self.log("❌ 无法导入create_window模块")
+                return
+            
+            # 获取模板信息
+            template_config = None
+            prefix = self.prefix_input.text().strip() or "默认模板"
+            
+            if template_id:
+                template_info = get_browser_info(template_id)
+                if template_info:
+                    prefix = template_info.get('name', prefix)
+                    template_config = template_info
+                else:
+                    self.log(f"⚠️ 模板 {template_id} 不存在，使用默认配置")
+            
+            self.log(f"准备创建 {len(accounts)} 个窗口，前缀: {prefix}")
+            
+            # 获取额外配置
+            platform_url = self.platform_input.text().strip()
+            extra_urls = [u.strip() for u in self.extra_url_input.text().split(',') if u.strip()]
+            
+            created_count = 0
+            proxy_index = 0
+            
+            for i, acc in enumerate(accounts):
+                email = acc.get('email', '')
+                password = acc.get('password', '')
+                recovery_email = acc.get('recovery_email', '')
+                secret_key = acc.get('secret_key', '')
+                
+                # 构建备注
+                remark = f"{email}----{password}"
+                if recovery_email:
+                    remark += f"----{recovery_email}"
+                if secret_key:
+                    remark += f"----{secret_key}"
+                
+                # 分配代理
+                proxy_info = None
+                if proxies and proxy_index < len(proxies):
+                    proxy = proxies[proxy_index]
+                    proxy_index += 1
+                    proxy_info = {
+                        'proxyType': proxy.get('proxy_type', 'socks5'),
+                        'proxyHost': proxy.get('host', ''),
+                        'proxyPort': proxy.get('port', ''),
+                        'proxyUser': proxy.get('username', ''),
+                        'proxyPass': proxy.get('password', '')
+                    }
+                
+                # 生成窗口名称
+                window_name = get_next_window_name(prefix)
+                
+                self.log(f"[{i+1}/{len(accounts)}] 创建窗口: {window_name}")
+                
+                try:
+                    # 创建窗口
+                    result = create_browser_window(
+                        email=email,
+                        remark=remark,
+                        window_name=window_name,
+                        template_config=template_config,
+                        proxy_info=proxy_info,
+                        platform_url=platform_url,
+                        extra_urls=extra_urls
+                    )
+                    
+                    if result and result.get('success'):
+                        browser_id = result.get('data', {}).get('id', '')
+                        self.log(f"  ✅ 创建成功: {browser_id}")
+                        
+                        # 更新数据库中账号的browser_id
+                        if browser_id:
+                            DBManager.update_account_browser_id(email, browser_id)
+                        
+                        created_count += 1
+                    else:
+                        self.log(f"  ❌ 创建失败: {result}")
+                        
+                except Exception as e:
+                    self.log(f"  ❌ 创建出错: {e}")
+            
+            self.log(f"\n创建完成，成功 {created_count}/{len(accounts)} 个")
+            self._refresh_browser_list()
+            self._check_files()
+            
+        except Exception as e:
+            self.log(f"创建窗口失败: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _stop_task(self):
         """停止当前任务"""

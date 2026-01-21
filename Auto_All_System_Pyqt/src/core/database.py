@@ -401,6 +401,24 @@ class DBManager:
             return [dict(row) for row in rows]
     
     @staticmethod
+    def update_account_browser_id(email: str, browser_id: str):
+        """
+        @brief 更新账号的浏览器窗口ID
+        @param email 邮箱
+        @param browser_id 浏览器窗口ID
+        """
+        with lock:
+            conn = DBManager.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE accounts 
+                SET browser_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """, (browser_id, email))
+            conn.commit()
+            conn.close()
+    
+    @staticmethod
     def get_accounts_count_by_status():
         """
         @brief 获取各状态账号统计
